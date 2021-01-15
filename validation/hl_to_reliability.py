@@ -2,6 +2,7 @@ import os
 import csv
 from collections import defaultdict
 from operator import itemgetter
+from itertools import groupby, chain
 
 def split_highlighter(input_path, output_dir, batch_name):
     with open(input_path, 'r') as input_file:
@@ -10,18 +11,7 @@ def split_highlighter(input_path, output_dir, batch_name):
     virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
     user_seq_per_article(article_dict)
     remove_overlaps(article_dict)
-    save_ualpha_format(article_dict, virtual_corpus_positions, output_dir, batch_name)
-
-def map_topic_names(article_dict):
-    topic_names = set()
-    for article_sha256, rows in article_dict.items():
-        for row in rows:
-            topic_names.add(row['topic_name'])
-    topic_map = dict(zip(topic_names, range(len(topic_names))))
-    for article_sha256, rows in article_dict.items():
-        for row in rows:
-            row['topic_number'] = topic_map[row['topic_name']]
-    return topic_map
+    output_separate_topics(article_dict, virtual_corpus_positions, output_dir, batch_name)
 
 def group_by_article(input_file):
     article_dict = defaultdict(list)
@@ -38,6 +28,17 @@ def group_by_article(input_file):
 def convert_to_int(row, key):
     row[key] = int(row[key])
 
+def map_topic_names(article_dict):
+    topic_names = set()
+    for article_sha256, rows in article_dict.items():
+        for row in rows:
+            topic_names.add(row['topic_name'])
+    topic_map = dict(zip(topic_names, range(len(topic_names))))
+    for article_sha256, rows in article_dict.items():
+        for row in rows:
+            row['topic_number'] = topic_map[row['topic_name']]
+    return topic_map
+
 def cumulative_corpus_lengths(article_dict):
     virtual_corpus_positions = {}
     cumulative_length = 0
@@ -50,7 +51,8 @@ def user_seq_per_article(article_dict):
     for article_sha256, rows in article_dict.items():
         article_user_map = {}
         counter = 0
-        rows_by_date = sorted(rows, key=lambda x: x['created'])
+        sortkey = itemgetter('created')
+        rows_by_date = sorted(rows, key=sortkey)
         for row in rows_by_date:
             contributor_uuid = row['contributor_uuid']
             if contributor_uuid not in article_user_map:
@@ -60,47 +62,58 @@ def user_seq_per_article(article_dict):
             row['user_sequence_id'] = article_user_map[row['contributor_uuid']]
 
 def remove_overlaps(article_dict):
-    for article_sha256, rows in article_dict.items():
-        sortkeys = itemgetter('contributor_uuid', 'start_pos', 'end_pos')
-        rows_by_user_start = sorted(rows, key=sortkeys)
-        current_user = ''
-        for row in rows_by_user_start:
-            if current_user != row['contributor_uuid']:
-                current_user = row['contributor_uuid']
-                max_pos = row['end_pos']
-                continue
-            trimmed = False
-            initial = ("{}:{}".format(row['start_pos'], row['end_pos']))
-            if row['start_pos'] < max_pos:
-                row['start_pos'] = max_pos
-                trimmed = True
-            if row['end_pos'] < max_pos:
-                row['end_pos'] = max_pos
-                trimmed = True
-            if trimmed:
-                print("{} trimmed to {}:{}".format(initial, row['start_pos'], row['end_pos']))
-            max_pos = max(row['end_pos'], max_pos)
+    sortkeys = itemgetter('article_sha256', 'contributor_uuid', 'topic_name')
+    for article_rows in article_dict.values():
+        grouped_rows = sorted(article_rows, key=sortkeys)
+        for (article_sha256, contributor_uuid, topic_name), mergeable_rows in groupby(grouped_rows, key=sortkeys):
+            first_row = True
+            sort_by_pos = itemgetter('start_pos', 'end_pos')
+            for row in sorted(mergeable_rows, key=sort_by_pos):
+                if first_row:
+                    first_row = False
+                    max_pos = row['end_pos']
+                    continue
+                trimmed = False
+                initial = ("{}:{}".format(row['start_pos'], row['end_pos']))
+                if row['start_pos'] < max_pos:
+                    row['start_pos'] = max_pos
+                    trimmed = True
+                if row['end_pos'] < max_pos:
+                    row['end_pos'] = max_pos
+                    trimmed = True
+                if trimmed:
+                    print("{} trimmed to {}:{}".format(initial, row['start_pos'], row['end_pos']))
+                max_pos = max(row['end_pos'], max_pos)
 
-def save_ualpha_format(article_dict, virtual_corpus_positions, output_dir, batch_name):
-    output_path = os.path.join(output_dir, batch_name + ".csv")
+def output_separate_topics(article_dict, virtual_corpus_positions, output_dir, batch_name):
+    sort_by_topic = itemgetter('topic_name')
+    sorted_rows = sorted(chain.from_iterable(article_dict.values()), key=sort_by_topic)
+    for topic_name, rows in groupby(sorted_rows, key=sort_by_topic):
+        out_filename = batch_name.format(topic_name)
+        save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
+
+def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename):
+    fieldnames = [
+        'user_sequence_id',
+        'topic_number',
+        'start_pos',
+        'end_pos',
+    ]
+    output_path = os.path.join(output_dir, out_filename + ".csv")
     with open(output_path, 'w') as output_file:
-        fieldnames = [
-            'user_sequence_id',
-            'topic_number',
-            'start_pos',
-            'end_pos',
-        ]
         writer = csv.DictWriter(output_file, fieldnames=fieldnames)
-        for article_sha256, rows in article_dict.items():
+        sortkeys = itemgetter('article_sha256', 'user_sequence_id')
+        sorted_rows = sorted(rows, key=sortkeys)
+        for row in sorted_rows:
+            article_sha256 = row['article_sha256']
             virtual_position = virtual_corpus_positions[article_sha256]
-            for row in rows:
-                output_row = {
-                    'user_sequence_id': row['user_sequence_id'],
-                    'topic_number': row['topic_number'],
-                    'start_pos': virtual_position + row['start_pos'],
-                    'end_pos': virtual_position + row['end_pos'],
-                }
-                writer.writerow(output_row)
+            output_row = {
+                'user_sequence_id': row['user_sequence_id'],
+                'topic_number': row['topic_number'],
+                'start_pos': virtual_position + row['start_pos'],
+                'end_pos': virtual_position + row['end_pos'],
+            }
+            writer.writerow(output_row)
 
 if __name__ == "__main__":
     main_dir = "/Users/ng/Documents/CLIENTS/Thusly Inc/Customers/UT Austin-Howison/"
@@ -113,7 +126,7 @@ if __name__ == "__main__":
         "Pipeline-1E-SoftciteI_fromJSON-MTurk-2020-10-30T1440-Highlighter.csv"
     )
     out_dir_1E = os.path.join(in_dir_1E,"uAlpha-format")
-    split_highlighter(highlighter_1E, out_dir_1E, "Pipeline-1E-uAlpha")
+    split_highlighter(highlighter_1E, out_dir_1E, "Pipeline-1E-uAlpha-{}")
 
     in_dir_3E = os.path.join(
         main_dir,
@@ -126,5 +139,5 @@ if __name__ == "__main__":
     out_dir_3E = os.path.join(in_dir_3E,"uAlpha-format")
 
 
-    split_highlighter(highlighter_3E, out_dir_3E, "Pipeline-3E-uAlpha")
+    split_highlighter(highlighter_3E, out_dir_3E, "Pipeline-3E-uAlpha-{}")
 
