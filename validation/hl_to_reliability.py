@@ -94,23 +94,56 @@ def output_separate_topics(article_dict, virtual_corpus_positions, output_dir, b
 
 def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename):
     fieldnames = [
+        'row_label',
         'user_sequence_id',
         'topic_number',
+        'empty_col',
         'start_pos',
         'end_pos',
     ]
     output_path = os.path.join(output_dir, out_filename + ".csv")
     with open(output_path, 'w') as output_file:
+        sort_by_pos = itemgetter('start_pos', 'end_pos')
         writer = csv.DictWriter(output_file, fieldnames=fieldnames)
         sortkeys = itemgetter('article_sha256', 'user_sequence_id')
         sorted_rows = sorted(rows, key=sortkeys)
-        for row in sorted_rows:
-            article_sha256 = row['article_sha256']
+        row_count = 0
+        for (article_sha256, user_sequence_id), taskrun_rows in groupby(sorted_rows, key=sortkeys):
             virtual_position = virtual_corpus_positions[article_sha256]
-            output_row = {
-                'user_sequence_id': row['user_sequence_id'],
-                'topic_number': row['topic_number'],
-                'start_pos': virtual_position + row['start_pos'],
-                'end_pos': virtual_position + row['end_pos'],
-            }
-            writer.writerow(output_row)
+            current_pos = 0
+            for row in sorted(taskrun_rows, key=sort_by_pos):
+                if current_pos < row['start_pos']:
+                    negative_highlight = {
+                        'row_label': "u{}".format(row_count),
+                        'user_sequence_id': row['user_sequence_id'],
+                        'topic_number': 9999,
+                        'empty_col': '',
+                        'start_pos': virtual_position + current_pos,
+                        'end_pos': virtual_position + row['start_pos'],
+                    }
+                    writer.writerow(negative_highlight)
+                    row_count += 1
+                output_row = {
+                    'row_label': "u{}".format(row_count),
+                    'user_sequence_id': row['user_sequence_id'],
+                    'topic_number': row['topic_number'],
+                    'empty_col': '',
+                    'start_pos': virtual_position + row['start_pos'],
+                    'end_pos': virtual_position + row['end_pos'],
+                }
+                writer.writerow(output_row)
+                row_count += 1
+                current_pos = row['end_pos']
+            article_text_length = row['article_text_length']
+            if current_pos < article_text_length:
+                negative_highlight = {
+                    'row_label': "u{}".format(row_count),
+                    'user_sequence_id': row['user_sequence_id'],
+                    'topic_number': 9999,
+                    'empty_col': '',
+                    'start_pos': virtual_position + current_pos,
+                    'end_pos': virtual_position + article_text_length,
+                }
+                writer.writerow(negative_highlight)
+                row_count += 1
+                current_pos = article_text_length
