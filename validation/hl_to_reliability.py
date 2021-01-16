@@ -103,6 +103,7 @@ def output_separate_topics(article_dict, virtual_corpus_positions, output_dir, b
     sorted_rows = sorted(chain.from_iterable(article_dict.values()), key=sort_by_topic)
     for topic_name, rows in groupby(sorted_rows, key=sort_by_topic):
         out_filename = batch_name.format(topic_name)
+        print("Saving topic '{}' to '{}'".format(topic_name, out_filename))
         save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
 
 def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename):
@@ -116,55 +117,61 @@ def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
     ]
     output_path = os.path.join(output_dir, out_filename + ".csv")
     with open(output_path, 'w') as output_file:
-        sort_by_pos = itemgetter('start_pos', 'end_pos')
         writer = csv.DictWriter(output_file, fieldnames=fieldnames)
-        sortkeys = itemgetter('article_sha256', 'user_sequence_id')
-        sorted_rows = sorted(rows, key=sortkeys)
+        sort_by_article = itemgetter('article_sha256')
+        sorted_rows = sorted(rows, key=sort_by_article)
+        sort_by_rater = itemgetter('user_sequence_id')
+        sort_by_pos = itemgetter('start_pos', 'end_pos')
         row_count = 0
-        for (article_sha256, user_sequence_id), taskrun_rows in groupby(sorted_rows, key=sortkeys):
-            taskrun_rows_sorted = sorted(taskrun_rows, key=sort_by_pos)
-            raters = unique_raters(taskrun_rows_sorted)
+        skipped_articles = set()
+        for article_sha256, article_rows_sorted in groupby(sorted_rows, key=sort_by_article):
+            rows_by_rater = sorted(article_rows_sorted, key=sort_by_rater)
+            raters = unique_raters(rows_by_rater)
             if len(raters) < 2:
-                print("Skipping {} with {} raters".format(article_sha256, len(raters)))
+                skipped_articles.add(article_sha256)
                 continue
-            virtual_position = virtual_corpus_positions[article_sha256]
-            current_pos = 0
-            for row in taskrun_rows_sorted:
-                if current_pos < row['start_pos']:
+            for user_sequence_id, taskrun_rows_sorted  in groupby(rows_by_rater, key=sort_by_rater):
+                rows_by_pos = sorted(taskrun_rows_sorted, key=sort_by_pos)
+                virtual_position = virtual_corpus_positions[article_sha256]
+                current_pos = 0
+                for row in rows_by_pos:
+                    if current_pos < row['start_pos']:
+                        negative_highlight = {
+                            'row_label': "u{}".format(row_count),
+                            'user_sequence_id': row['user_sequence_id'],
+                            'topic_number': 9999,
+                            'empty_col': '',
+                            'start_pos': virtual_position + current_pos,
+                            'end_pos': virtual_position + row['start_pos'],
+                        }
+                        writer.writerow(negative_highlight)
+                        row_count += 1
+                    output_row = {
+                        'row_label': "u{}".format(row_count),
+                        'user_sequence_id': row['user_sequence_id'],
+                        'topic_number': row['topic_number'],
+                        'empty_col': '',
+                        'start_pos': virtual_position + row['start_pos'],
+                        'end_pos': virtual_position + row['end_pos'],
+                    }
+                    writer.writerow(output_row)
+                    row_count += 1
+                    current_pos = row['end_pos']
+                article_text_length = row['article_text_length']
+                if current_pos < article_text_length:
                     negative_highlight = {
                         'row_label': "u{}".format(row_count),
                         'user_sequence_id': row['user_sequence_id'],
                         'topic_number': 9999,
                         'empty_col': '',
                         'start_pos': virtual_position + current_pos,
-                        'end_pos': virtual_position + row['start_pos'],
+                        'end_pos': virtual_position + article_text_length,
                     }
                     writer.writerow(negative_highlight)
                     row_count += 1
-                output_row = {
-                    'row_label': "u{}".format(row_count),
-                    'user_sequence_id': row['user_sequence_id'],
-                    'topic_number': row['topic_number'],
-                    'empty_col': '',
-                    'start_pos': virtual_position + row['start_pos'],
-                    'end_pos': virtual_position + row['end_pos'],
-                }
-                writer.writerow(output_row)
-                row_count += 1
-                current_pos = row['end_pos']
-            article_text_length = row['article_text_length']
-            if current_pos < article_text_length:
-                negative_highlight = {
-                    'row_label': "u{}".format(row_count),
-                    'user_sequence_id': row['user_sequence_id'],
-                    'topic_number': 9999,
-                    'empty_col': '',
-                    'start_pos': virtual_position + current_pos,
-                    'end_pos': virtual_position + article_text_length,
-                }
-                writer.writerow(negative_highlight)
-                row_count += 1
-                current_pos = article_text_length
+                    current_pos = article_text_length
+            if len(skipped_articles):
+                print("Skipped {} articles with less than two raters.".format(len(skipped_articles)))
 
 def unique_raters(rows):
     raters = set()
