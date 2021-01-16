@@ -8,6 +8,7 @@ def split_highlighter(input_path, output_dir, batch_name):
     with open(input_path, 'r') as input_file:
         article_dict = group_by_article(input_file)
     topic_map = map_topic_names(article_dict)
+    remove_if_not_pairable(article_dict)
     virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
     user_seq_per_article(article_dict)
     remove_overlaps(article_dict)
@@ -38,6 +39,18 @@ def map_topic_names(article_dict):
         for row in rows:
             row['topic_number'] = topic_map[row['topic_name']]
     return topic_map
+
+def remove_if_not_pairable(article_dict):
+    removed_articles = set()
+    for article_sha256, rows in list(article_dict.items()):
+        raters = set()
+        for row in rows:
+            raters.add(row['contributor_uuid'])
+        if len(raters) < 2:
+            removed_articles.add(article_sha256)
+            del article_dict[article_sha256]
+    print("Removing {} articles with less than two raters.".format(len(removed_articles)))
+    return removed_articles
 
 def cumulative_corpus_lengths(article_dict):
     virtual_corpus_positions = {}
@@ -109,9 +122,14 @@ def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
         sorted_rows = sorted(rows, key=sortkeys)
         row_count = 0
         for (article_sha256, user_sequence_id), taskrun_rows in groupby(sorted_rows, key=sortkeys):
+            taskrun_rows_sorted = sorted(taskrun_rows, key=sort_by_pos)
+            raters = unique_raters(taskrun_rows_sorted)
+            if len(raters) < 2:
+                print("Skipping {} with {} raters".format(article_sha256, len(raters)))
+                continue
             virtual_position = virtual_corpus_positions[article_sha256]
             current_pos = 0
-            for row in sorted(taskrun_rows, key=sort_by_pos):
+            for row in taskrun_rows_sorted:
                 if current_pos < row['start_pos']:
                     negative_highlight = {
                         'row_label': "u{}".format(row_count),
@@ -147,3 +165,9 @@ def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
                 writer.writerow(negative_highlight)
                 row_count += 1
                 current_pos = article_text_length
+
+def unique_raters(rows):
+    raters = set()
+    for row in rows:
+        raters.add(row['contributor_uuid'])
+    return raters
