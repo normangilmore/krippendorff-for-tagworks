@@ -9,10 +9,12 @@ def split_highlighter(input_path, output_dir, batch_name):
         article_dict = group_by_article(input_file)
     topic_map = map_topic_names(article_dict)
     remove_if_not_pairable(article_dict)
-    virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
-    user_seq_per_article(article_dict)
+    cumulative_length, virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
+    print("Article count: {}. Corpus character length: {}.".format(len(article_dict), cumulative_length))
+    maximum_raters = user_seq_per_article(article_dict)
+    print("Maximum raters for an article: {}".format(maximum_raters))
     remove_overlaps(article_dict)
-    output_separate_topics(article_dict, virtual_corpus_positions, output_dir, batch_name)
+    output_separate_topics(article_dict, cumulative_length, virtual_corpus_positions, output_dir, batch_name)
 
 def group_by_article(input_file):
     article_dict = defaultdict(list)
@@ -58,9 +60,10 @@ def cumulative_corpus_lengths(article_dict):
     for article_sha256 in article_dict.keys():
         virtual_corpus_positions[article_sha256] = cumulative_length
         cumulative_length += article_dict[article_sha256][0]['article_text_length']
-    return virtual_corpus_positions
+    return cumulative_length, virtual_corpus_positions
 
 def user_seq_per_article(article_dict):
+    maximum_raters = 0
     for article_sha256, rows in article_dict.items():
         article_user_map = {}
         counter = 0
@@ -73,6 +76,8 @@ def user_seq_per_article(article_dict):
                 counter += 1
         for row in rows:
             row['user_sequence_id'] = article_user_map[row['contributor_uuid']]
+        maximum_raters = max(counter, maximum_raters)
+    return maximum_raters
 
 def remove_overlaps(article_dict):
     sortkeys = itemgetter('article_sha256', 'contributor_uuid', 'topic_name')
@@ -98,13 +103,21 @@ def remove_overlaps(article_dict):
                     print("{} trimmed to {}:{}".format(initial, row['start_pos'], row['end_pos']))
                 max_pos = max(row['end_pos'], max_pos)
 
-def output_separate_topics(article_dict, virtual_corpus_positions, output_dir, batch_name):
+def output_separate_topics(
+        article_dict, cumulative_length, virtual_corpus_positions, output_dir=None, batch_name=None
+    ):
     sort_by_topic = itemgetter('topic_name')
     sorted_rows = sorted(chain.from_iterable(article_dict.values()), key=sort_by_topic)
     for topic_name, rows in groupby(sorted_rows, key=sort_by_topic):
-        out_filename = batch_name.format(topic_name)
-        print("Saving topic '{}' to '{}'".format(topic_name, out_filename))
-        save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
+        print_alpha_for_topic(topic_name, rows, cumulative_length, virtual_corpus_positions)
+        if output_dir and batch_name:
+            out_filename = batch_name.format(topic_name)
+            print("Saving topic '{}' to '{}'".format(topic_name, out_filename))
+            save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
+
+def print_alpha_for_topic(topic_name, rows, cumulative_length, virtual_corpus_positions):
+    for row_count, output_row in output_generator(rows, virtual_corpus_positions):
+        pass # Create reliability np.array here.
 
 def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename):
     fieldnames = [
@@ -118,60 +131,64 @@ def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
     output_path = os.path.join(output_dir, out_filename + ".csv")
     with open(output_path, 'w') as output_file:
         writer = csv.DictWriter(output_file, fieldnames=fieldnames)
-        sort_by_article = itemgetter('article_sha256')
-        sorted_rows = sorted(rows, key=sort_by_article)
-        sort_by_rater = itemgetter('user_sequence_id')
-        sort_by_pos = itemgetter('start_pos', 'end_pos')
-        row_count = 0
-        skipped_articles = set()
-        for article_sha256, article_rows_sorted in groupby(sorted_rows, key=sort_by_article):
-            rows_by_rater = sorted(article_rows_sorted, key=sort_by_rater)
-            raters = unique_raters(rows_by_rater)
-            if len(raters) < 2:
-                skipped_articles.add(article_sha256)
-                continue
-            for user_sequence_id, taskrun_rows_sorted  in groupby(rows_by_rater, key=sort_by_rater):
-                rows_by_pos = sorted(taskrun_rows_sorted, key=sort_by_pos)
-                virtual_position = virtual_corpus_positions[article_sha256]
-                current_pos = 0
-                for row in rows_by_pos:
-                    if current_pos < row['start_pos']:
-                        negative_highlight = {
-                            'row_label': "u{}".format(row_count),
-                            'user_sequence_id': row['user_sequence_id'],
-                            'topic_number': 9999,
-                            'empty_col': '',
-                            'start_pos': virtual_position + current_pos,
-                            'end_pos': virtual_position + row['start_pos'],
-                        }
-                        writer.writerow(negative_highlight)
-                        row_count += 1
-                    output_row = {
-                        'row_label': "u{}".format(row_count),
-                        'user_sequence_id': row['user_sequence_id'],
-                        'topic_number': row['topic_number'],
-                        'empty_col': '',
-                        'start_pos': virtual_position + row['start_pos'],
-                        'end_pos': virtual_position + row['end_pos'],
-                    }
-                    writer.writerow(output_row)
-                    row_count += 1
-                    current_pos = row['end_pos']
-                article_text_length = row['article_text_length']
-                if current_pos < article_text_length:
+        for row_count, output_row in output_generator(rows, virtual_corpus_positions):
+            writer.writerow(output_row)
+
+def output_generator(rows, virtual_corpus_positions):
+    sort_by_article = itemgetter('article_sha256')
+    sorted_rows = sorted(rows, key=sort_by_article)
+    sort_by_rater = itemgetter('user_sequence_id')
+    sort_by_pos = itemgetter('start_pos', 'end_pos')
+    row_count = 0
+    skipped_articles = set()
+    for article_sha256, article_rows_sorted in groupby(sorted_rows, key=sort_by_article):
+        rows_by_rater = sorted(article_rows_sorted, key=sort_by_rater)
+        raters = unique_raters(rows_by_rater)
+        if len(raters) < 2:
+            skipped_articles.add(article_sha256)
+            continue
+        for user_sequence_id, taskrun_rows_sorted  in groupby(rows_by_rater, key=sort_by_rater):
+            rows_by_pos = sorted(taskrun_rows_sorted, key=sort_by_pos)
+            virtual_position = virtual_corpus_positions[article_sha256]
+            current_pos = 0
+            for row in rows_by_pos:
+                if current_pos < row['start_pos']:
                     negative_highlight = {
                         'row_label': "u{}".format(row_count),
                         'user_sequence_id': row['user_sequence_id'],
                         'topic_number': 9999,
                         'empty_col': '',
                         'start_pos': virtual_position + current_pos,
-                        'end_pos': virtual_position + article_text_length,
+                        'end_pos': virtual_position + row['start_pos'],
                     }
-                    writer.writerow(negative_highlight)
+                    yield row_count, negative_highlight
                     row_count += 1
-                    current_pos = article_text_length
-            if len(skipped_articles):
-                print("Skipped {} articles with less than two raters.".format(len(skipped_articles)))
+                output_row = {
+                    'row_label': "u{}".format(row_count),
+                    'user_sequence_id': row['user_sequence_id'],
+                    'topic_number': row['topic_number'],
+                    'empty_col': '',
+                    'start_pos': virtual_position + row['start_pos'],
+                    'end_pos': virtual_position + row['end_pos'],
+                }
+                yield row_count, output_row
+                row_count += 1
+                current_pos = row['end_pos']
+            article_text_length = row['article_text_length']
+            if current_pos < article_text_length:
+                negative_highlight = {
+                    'row_label': "u{}".format(row_count),
+                    'user_sequence_id': row['user_sequence_id'],
+                    'topic_number': 9999,
+                    'empty_col': '',
+                    'start_pos': virtual_position + current_pos,
+                    'end_pos': virtual_position + article_text_length,
+                }
+                yield row_count, negative_highlight
+                row_count += 1
+                current_pos = article_text_length
+        if len(skipped_articles):
+            print("Skipped {} articles with less than two raters.".format(len(skipped_articles)))
 
 def unique_raters(rows):
     raters = set()
