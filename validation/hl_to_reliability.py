@@ -3,18 +3,24 @@ import csv
 from collections import defaultdict
 from operator import itemgetter
 from itertools import groupby, chain
+import numpy as np
+from krippendorff import alpha
 
 def split_highlighter(input_path, output_dir, batch_name):
     with open(input_path, 'r') as input_file:
         article_dict = group_by_article(input_file)
+    print("Loading '{}' for Krippendorff calculation.".format(os.path.basename(input_path)))
     topic_map = map_topic_names(article_dict)
     remove_if_not_pairable(article_dict)
     cumulative_length, virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
     print("Article count: {}. Corpus character length: {}.".format(len(article_dict), cumulative_length))
     maximum_raters = user_seq_per_article(article_dict)
     print("Maximum raters for an article: {}".format(maximum_raters))
-    remove_overlaps(article_dict)
-    output_separate_topics(article_dict, cumulative_length, virtual_corpus_positions, output_dir, batch_name)
+    remove_overlaps(article_dict, show_trims=True)
+    output_separate_topics(
+        article_dict, maximum_raters, cumulative_length, virtual_corpus_positions,
+        output_dir, batch_name
+    )
 
 def group_by_article(input_file):
     article_dict = defaultdict(list)
@@ -79,7 +85,7 @@ def user_seq_per_article(article_dict):
         maximum_raters = max(counter, maximum_raters)
     return maximum_raters
 
-def remove_overlaps(article_dict):
+def remove_overlaps(article_dict, show_trims=True):
     sortkeys = itemgetter('article_sha256', 'contributor_uuid', 'topic_name')
     for article_rows in article_dict.values():
         grouped_rows = sorted(article_rows, key=sortkeys)
@@ -99,25 +105,33 @@ def remove_overlaps(article_dict):
                 if row['end_pos'] < max_pos:
                     row['end_pos'] = max_pos
                     trimmed = True
-                if trimmed:
+                if trimmed and show_trims:
                     print("{} trimmed to {}:{}".format(initial, row['start_pos'], row['end_pos']))
                 max_pos = max(row['end_pos'], max_pos)
 
 def output_separate_topics(
-        article_dict, cumulative_length, virtual_corpus_positions, output_dir=None, batch_name=None
+        article_dict, maximum_raters, cumulative_length, virtual_corpus_positions,
+        output_dir=None, batch_name=None
     ):
     sort_by_topic = itemgetter('topic_name')
     sorted_rows = sorted(chain.from_iterable(article_dict.values()), key=sort_by_topic)
     for topic_name, rows in groupby(sorted_rows, key=sort_by_topic):
-        print_alpha_for_topic(topic_name, rows, cumulative_length, virtual_corpus_positions)
+        print_alpha_for_topic(topic_name, rows, maximum_raters, cumulative_length, virtual_corpus_positions)
         if output_dir and batch_name:
             out_filename = batch_name.format(topic_name)
             print("Saving topic '{}' to '{}'".format(topic_name, out_filename))
             save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
 
-def print_alpha_for_topic(topic_name, rows, cumulative_length, virtual_corpus_positions):
+def print_alpha_for_topic(topic_name, rows, maximum_raters, cumulative_length, virtual_corpus_positions):
+    reliability_data = np.full((maximum_raters, cumulative_length), np.nan, dtype=float)
     for row_count, output_row in output_generator(rows, virtual_corpus_positions):
-        pass # Create reliability np.array here.
+        start_pos = output_row['start_pos']
+        end_pos = output_row['end_pos']
+        user_sequence_id = output_row['user_sequence_id']
+        topic_number = output_row['topic_number']
+        reliability_data[user_sequence_id][start_pos:end_pos] = topic_number
+    k_alpha = alpha(reliability_data=reliability_data, level_of_measurement='nominal')
+    print("Krippendorff alpha is {:.3f} for '{}'".format(k_alpha, topic_name))
 
 def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename):
     fieldnames = [
