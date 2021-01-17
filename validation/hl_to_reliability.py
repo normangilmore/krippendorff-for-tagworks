@@ -123,13 +123,14 @@ def output_separate_topics(
             save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
 
 def print_alpha_for_topic(topic_name, rows, maximum_raters, cumulative_length, virtual_corpus_positions):
-    reliability_data = np.full((maximum_raters, cumulative_length), np.nan, dtype=float)
+    dtype=float
+    reliability_data = np.full((maximum_raters, cumulative_length), np.nan, dtype=dtype)
     for row_count, output_row in output_generator(rows, virtual_corpus_positions):
         start_pos = output_row['start_pos']
         end_pos = output_row['end_pos']
         user_sequence_id = output_row['user_sequence_id']
         topic_number = output_row['topic_number']
-        reliability_data[user_sequence_id][start_pos:end_pos] = topic_number
+        reliability_data[user_sequence_id][start_pos:end_pos] = dtype(topic_number)
     k_alpha = alpha(reliability_data=reliability_data, level_of_measurement='nominal')
     print("Krippendorff alpha is {:.3f} for '{}'".format(k_alpha, topic_name))
 
