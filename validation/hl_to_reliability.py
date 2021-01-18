@@ -131,6 +131,7 @@ def output_separate_topics(
     sort_by_topic = itemgetter('topic_name')
     sorted_rows = sorted(chain.from_iterable(article_dict.values()), key=sort_by_topic)
     for topic_name, rows in groupby(sorted_rows, key=sort_by_topic):
+        rows = list(rows) # copy since we want to iterate over twice
         print_alpha_for_topic(topic_name, rows, maximum_raters, cumulative_length, virtual_corpus_positions)
         if output_dir and batch_name:
             out_filename = batch_name.format(topic_name)
