@@ -1,4 +1,10 @@
 import os
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+import gzip
+from contextlib import closing
 import csv
 from collections import defaultdict
 from operator import itemgetter
@@ -7,8 +13,8 @@ import numpy as np
 from krippendorff import alpha
 
 def split_highlighter(input_path, output_dir, batch_name):
-    with open(input_path, 'r') as input_file:
-        article_dict = group_by_article(input_file)
+    with closing(gunzip_if_needed(input_path)) as csv_file:
+        article_dict = group_by_article(csv_file)
     print("Loading '{}' for Krippendorff calculation.".format(os.path.basename(input_path)))
     topic_map = map_topic_names(article_dict)
     remove_if_not_pairable(article_dict)
@@ -21,6 +27,15 @@ def split_highlighter(input_path, output_dir, batch_name):
         article_dict, maximum_raters, cumulative_length, virtual_corpus_positions,
         output_dir, batch_name
     )
+
+# Call this by passing to contextlib.closing()
+def gunzip_if_needed(input_path):
+    bare_filename, ext = os.path.splitext(os.path.basename(input_path))
+    if ext == ".gz":
+        file_handle = gzip.open(input_path, mode='rt', encoding='utf-8-sig', errors='strict')
+    else:
+        file_handle = open(input_path, mode='rt', encoding='utf-8-sig', errors='strict')
+    return file_handle
 
 def group_by_article(input_file):
     article_dict = defaultdict(list)
