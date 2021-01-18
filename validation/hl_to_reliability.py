@@ -2,7 +2,7 @@ import os
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+import argparse
 import gzip
 from contextlib import closing
 import csv
@@ -159,7 +159,7 @@ def save_ualpha_format(rows, virtual_corpus_positions, output_dir, out_filename)
         'start_pos',
         'end_pos',
     ]
-    output_path = os.path.join(output_dir, out_filename + ".csv")
+    output_path = os.path.join(output_dir, out_filename)
     with open(output_path, 'w') as output_file:
         writer = csv.DictWriter(output_file, fieldnames=fieldnames)
         for row_count, output_row in output_generator(rows, virtual_corpus_positions):
@@ -226,3 +226,26 @@ def unique_raters(rows):
     for row in rows:
         raters.add(row['contributor_uuid'])
     return raters
+
+def load_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-i', '--input-file',
+        help='CSV file with highlights applied to articles (not TUAs).')
+    parser.add_argument(
+        '-o', '--output-dir',
+        help='Output directory')
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = load_args()
+    input_file = 'Highlighter.csv'
+    if args.input_file:
+        input_file = args.input_file
+    bare_filename, ext = os.path.splitext(os.path.basename(input_file))
+    if ext == ".gz":
+        bare_filename, ext = os.path.splitext(os.path.basename(bare_filename))
+    output_dir = os.path.dirname(input_file)
+    if args.output_dir:
+        output_dir = args.output_dir
+    split_highlighter(input_file, output_dir, bare_filename + "-uAlpha-{}.csv")
