@@ -26,12 +26,15 @@ from itertools import groupby, chain
 import numpy as np
 from krippendorff import alpha
 
+# Constant to use as topic for all article text not highlighted by a rater.
+NO_HIGHLIGHT = 9999
+
 def split_highlighter(input_path, output_dir, batch_name):
     with closing(gunzip_if_needed(input_path)) as csv_file:
         article_dict = group_by_article(csv_file)
     print("Loading '{}' for Krippendorff calculation.".format(os.path.basename(input_path)))
     topic_map = map_topic_names(article_dict)
-    remove_if_not_pairable(article_dict)
+    add_missing_taskruns(article_dict, minimum_redundancy=2)
     cumulative_length, virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
     print("Article count: {}. Corpus character length: {}.".format(len(article_dict), cumulative_length))
     maximum_raters = user_seq_per_article(article_dict)
@@ -76,6 +79,29 @@ def map_topic_names(article_dict):
         for row in rows:
             row['topic_number'] = topic_map[row['topic_name']]
     return topic_map
+
+def add_missing_taskruns(article_dict, minimum_redundancy=2):
+    negative_taskrun_articles = set()
+    for article_sha256, rows in list(article_dict.items()):
+        raters = set()
+        for row in rows:
+            raters.add(row['contributor_uuid'])
+            row_template = dict(row)
+        if len(raters) > 0 and len(raters) < minimum_redundancy:
+            negative_taskrun_articles.add(article_sha256)
+            missing_taskrun_count = minimum_redundancy - len(raters)
+            for i in range(8000, 8000 + missing_taskrun_count):
+                negative_taskrun = dict(row_template)
+                negative_taskrun['contributor_uuid'] = str(i)
+                negative_taskrun['start_pos'] = 0
+                negative_taskrun['end_pos'] = negative_taskrun['article_text_length']
+                negative_taskrun['topic_number'] = NO_HIGHLIGHT
+                article_dict[article_sha256].append(negative_taskrun)
+    print(
+        "Added negative task runs to {} articles to bring up to {} raters."
+        .format(len(negative_taskrun_articles), minimum_redundancy)
+    )
+    return negative_taskrun_articles
 
 def remove_if_not_pairable(article_dict):
     removed_articles = set()
@@ -201,7 +227,7 @@ def output_generator(rows, virtual_corpus_positions):
                     negative_highlight = {
                         'row_label': "u{}".format(row_count),
                         'user_sequence_id': row['user_sequence_id'],
-                        'topic_number': 9999,
+                        'topic_number': NO_HIGHLIGHT,
                         'empty_col': '',
                         'start_pos': virtual_position + current_pos,
                         'end_pos': virtual_position + row['start_pos'],
@@ -224,7 +250,7 @@ def output_generator(rows, virtual_corpus_positions):
                 negative_highlight = {
                     'row_label': "u{}".format(row_count),
                     'user_sequence_id': row['user_sequence_id'],
-                    'topic_number': 9999,
+                    'topic_number': NO_HIGHLIGHT,
                     'empty_col': '',
                     'start_pos': virtual_position + current_pos,
                     'end_pos': virtual_position + article_text_length,
