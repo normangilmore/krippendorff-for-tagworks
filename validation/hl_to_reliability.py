@@ -29,12 +29,16 @@ from krippendorff import alpha
 # Constant to use as topic for all article text not highlighted by a rater.
 NO_HIGHLIGHT = 9999
 
-def split_highlighter(input_path, output_dir, batch_name):
+def split_highlighter(
+        input_path, output_dir, batch_name,
+        minimum_redundancy=0
+    ):
     with closing(gunzip_if_needed(input_path)) as csv_file:
         article_dict = group_by_article(csv_file)
     print("Loading '{}' for Krippendorff calculation.".format(os.path.basename(input_path)))
     topic_map = map_topic_names(article_dict)
-    add_missing_taskruns(article_dict, minimum_redundancy=2)
+    if minimum_redundancy >= 2:
+        add_missing_taskruns(article_dict, minimum_redundancy=minimum_redundancy)
     cumulative_length, virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
     print("Article count: {}. Corpus character length: {}.".format(len(article_dict), cumulative_length))
     maximum_raters = user_seq_per_article(article_dict)
@@ -275,6 +279,11 @@ def load_args():
     parser.add_argument(
         '-o', '--output-dir',
         help='Output directory')
+    parser.add_argument(
+        '-m', '--minimum-redundancy',
+        default=0,
+        help='Create negative task runs for articles below this number of task runs.'
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -288,4 +297,8 @@ if __name__ == "__main__":
     output_dir = os.path.dirname(input_file)
     if args.output_dir:
         output_dir = args.output_dir
-    split_highlighter(input_file, output_dir, bare_filename + "-uAlpha-{}.csv")
+    minimum_redundancy = int(args.minimum_redundancy)
+    split_highlighter(
+        input_file, output_dir, bare_filename + "-uAlpha-{}.csv",
+        minimum_redundancy=minimum_redundancy
+    )
