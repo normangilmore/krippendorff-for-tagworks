@@ -258,8 +258,8 @@ def output_generator(rows, virtual_corpus_positions):
                 yield row_count, negative_highlight
                 row_count += 1
                 current_pos = article_text_length
-        if len(skipped_articles):
-            print("Skipped {} articles with less than two raters.".format(len(skipped_articles)))
+    if len(skipped_articles):
+        print("Skipped {} articles with less than two raters.".format(len(skipped_articles)))
 
 def unique_raters(rows):
     raters = set()
