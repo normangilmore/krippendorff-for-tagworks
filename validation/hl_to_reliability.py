@@ -29,16 +29,12 @@ from krippendorff import alpha
 # Constant to use as topic for all article text not highlighted by a rater.
 NO_HIGHLIGHT = 9999
 
-def split_highlighter(
-        input_path, output_dir, batch_name,
-        minimum_redundancy=0
-    ):
+def split_highlighter(input_path, output_dir, batch_name):
     with closing(gunzip_if_needed(input_path)) as csv_file:
         article_dict = group_by_article(csv_file)
     print("Loading '{}' for Krippendorff calculation.".format(os.path.basename(input_path)))
     topic_map = map_topic_names(article_dict)
-    if minimum_redundancy >= 2:
-        add_missing_taskruns(article_dict, minimum_redundancy=minimum_redundancy)
+    add_missing_taskruns(article_dict)
     cumulative_length, virtual_corpus_positions = cumulative_corpus_lengths(article_dict)
     print("Article count: {}. Corpus character length: {}.".format(len(article_dict), cumulative_length))
     maximum_raters = user_seq_per_article(article_dict)
@@ -63,6 +59,7 @@ def group_by_article(input_file):
     reader = csv.DictReader(input_file)
     for row in reader:
         fresh_row = dict(row)
+        convert_to_int(fresh_row, 'taskrun_count')
         convert_to_int(fresh_row, 'article_text_length')
         convert_to_int(fresh_row, 'start_pos')
         convert_to_int(fresh_row, 'end_pos')
@@ -84,16 +81,18 @@ def map_topic_names(article_dict):
             row['topic_number'] = topic_map[row['topic_name']]
     return topic_map
 
-def add_missing_taskruns(article_dict, minimum_redundancy=2):
+def add_missing_taskruns(article_dict):
     negative_taskrun_articles = set()
     for article_sha256, rows in list(article_dict.items()):
         raters = set()
+        taskrun_count = 0
         for row in rows:
             raters.add(row['contributor_uuid'])
             row_template = dict(row)
-        if len(raters) > 0 and len(raters) < minimum_redundancy:
+            taskrun_count = row['taskrun_count']
+        if len(raters) > 0 and len(raters) < taskrun_count:
             negative_taskrun_articles.add(article_sha256)
-            missing_taskrun_count = minimum_redundancy - len(raters)
+            missing_taskrun_count = taskrun_count - len(raters)
             for i in range(8000, 8000 + missing_taskrun_count):
                 negative_taskrun = dict(row_template)
                 negative_taskrun['contributor_uuid'] = str(i)
@@ -103,7 +102,7 @@ def add_missing_taskruns(article_dict, minimum_redundancy=2):
                 article_dict[article_sha256].append(negative_taskrun)
     print(
         "Added negative task runs to {} articles to bring up to {} raters."
-        .format(len(negative_taskrun_articles), minimum_redundancy)
+        .format(len(negative_taskrun_articles), taskrun_count)
     )
     return negative_taskrun_articles
 
@@ -279,11 +278,6 @@ def load_args():
     parser.add_argument(
         '-o', '--output-dir',
         help='Output directory')
-    parser.add_argument(
-        '-m', '--minimum-redundancy',
-        default=0,
-        help='Create negative task runs for articles below this number of task runs.'
-    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -297,8 +291,6 @@ if __name__ == "__main__":
     output_dir = os.path.dirname(input_file)
     if args.output_dir:
         output_dir = args.output_dir
-    minimum_redundancy = int(args.minimum_redundancy)
     split_highlighter(
         input_file, output_dir, bare_filename + "-uAlpha-{}.csv",
-        minimum_redundancy=minimum_redundancy
     )
