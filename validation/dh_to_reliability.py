@@ -80,8 +80,18 @@ class RadioVariable:
                 .format(answer_uuid, self.label)
             )
 
-    def print_alpha_for_question(self):
-        reliability_data = self.to_reliability()
+    def alpha_for_question(self, raters_to_exclude=set()):
+        reliability_data = self.to_reliability(raters_to_exclude=raters_to_exclude)
+        value_domain = sorted(self.values_map.values())
+        k_alpha = alpha(
+            reliability_data=reliability_data,
+            value_domain=value_domain,
+            level_of_measurement=self.alpha_distance
+        )
+        return k_alpha
+
+    def print_alpha_for_question(self, raters_to_exclude=set()):
+        reliability_data = self.to_reliability(raters_to_exclude=raters_to_exclude)
         value_domain = sorted(self.values_map.values())
         k_alpha = alpha(
             reliability_data=reliability_data,
@@ -99,7 +109,7 @@ class RadioVariable:
               .format(self.label, k_alpha, self.alpha_distance, value_domain)
         )
 
-    def to_reliability(self):
+    def to_reliability(self, raters_to_exclude=set()):
         dtype=float
         unit_dict = defaultdict(list)
         for data_row in self.data_rows:
@@ -110,6 +120,9 @@ class RadioVariable:
         reliability_data = np.full((maximum_raters, total_units), np.nan, dtype=dtype)
         for column, rows in enumerate(unit_dict.values()):
             for row in rows:
+                contributor_uuid = row['contributor_uuid']
+                if contributor_uuid in raters_to_exclude:
+                    continue
                 user_sequence_id = row['user_sequence_id']
                 value = self.values_map[row['answer_uuid']]
                 reliability_data[user_sequence_id][column] = value
@@ -135,6 +148,12 @@ class RadioVariable:
                 row['user_sequence_id'] = rater_map[row['contributor_uuid']]
             maximum_raters = max(counter, maximum_raters)
         return maximum_raters
+
+    def unique_raters(self):
+        raters = set()
+        for row in self.data_rows:
+            raters.add(row['contributor_uuid'])
+        return raters
 
 
 class Schema:
@@ -189,11 +208,48 @@ class Schema:
         for variable in self.question_index.values():
             variable.print_alpha_for_question()
 
+    def rater_impact_on_alpha(self, report_threshold=0.01):
+        print("----Rater Impact Report----")
+        exceed_threshold = 0
+        exceed_raters = set()
+        raters = self.unique_raters()
+        results = defaultdict(dict)
+        for variable in self.question_index.values():
+            alpha_with_all = variable.alpha_for_question()
+            results['all'][variable.label] = alpha_with_all
+            for contributor_uuid in raters:
+                alpha_without_contrib = variable.alpha_for_question(raters_to_exclude=[contributor_uuid])
+                results[contributor_uuid][variable.label] = alpha_without_contrib
+                impact = alpha_without_contrib - alpha_with_all
+                if abs(impact) > report_threshold:
+                    exceed_threshold += 1
+                    exceed_raters.add(contributor_uuid)
+                    print(
+                        "{} all: {} rater {} impact: {}"
+                        .format(variable.label, alpha_with_all, contributor_uuid, impact)
+                    )
+        print(
+            "{} instances of impact exceeding the report threshold."
+            .format(exceed_threshold)
+        )
+        print(
+            "{} raters had an impact exceeding the report threshold."
+            .format(len(exceed_raters))
+        )
+        print("----End Rater Impact Report----")
+
+    def unique_raters(self):
+        raters = set()
+        for variable in self.question_index.values():
+            raters |= variable.unique_raters()
+        return raters
+
 
 def calculate_alphas_for_datahunt(schema_path, input_path):
     schema = load_data_hunt_schema(schema_path)
     load_data_hunt(input_path, schema)
     schema.print_alpha_per_question()
+    schema.rater_impact_on_alpha(report_threshold=0.1)
 
 def load_data_hunt_schema(input_path):
     print("Loading schema for '{}' for Krippendorff calculation."
