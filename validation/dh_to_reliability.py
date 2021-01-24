@@ -222,15 +222,6 @@ def gunzip_if_needed(input_path):
         file_handle = open(input_path, mode='rt', encoding='utf-8-sig', errors='strict')
     return file_handle
 
-def convert_to_int(row, key):
-    row[key] = int(row[key])
-
-def unique_raters(rows):
-    raters = set()
-    for row in rows:
-        raters.add(row['contributor_uuid'])
-    return raters
-
 def load_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
