@@ -220,7 +220,7 @@ class Schema:
             for contributor_uuid in raters:
                 alpha_without_contrib = variable.alpha_for_question(raters_to_exclude=[contributor_uuid])
                 results[contributor_uuid][variable.label] = alpha_without_contrib
-                impact = alpha_without_contrib - alpha_with_all
+                impact = alpha_with_all - alpha_without_contrib
                 if abs(impact) > report_threshold:
                     exceed_threshold += 1
                     exceed_raters.add(contributor_uuid)
