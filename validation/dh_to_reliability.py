@@ -25,13 +25,20 @@ from collections import defaultdict, OrderedDict
 from operator import itemgetter
 from itertools import groupby, chain
 import numpy as np
-from krippendorff import alpha
+from krippendorff.krippendorff import alpha, _coincidences, _reliability_data_to_value_counts
 
 ANSWER_LABEL_RE = re.compile(
     r'\s*T(?P<topic_number>\d+)\.'
     r'Q(?P<question_number>\d+)\.'
     r'A(?P<answer_number>\d+)'
 )
+
+def calc_pairable_values(reliability_data, value_domain):
+    value_domain = np.asarray(value_domain)
+    value_counts = _reliability_data_to_value_counts(reliability_data, value_domain)
+    o = _coincidences(value_counts, value_domain, dtype=float)
+    pairable_values = int(round(o.sum(), 0))
+    return pairable_values
 
 # This code takes a Data Hunt Schema file and Data Hunt data file and
 # organizes it into reliability matrices to calculate Krippendorff's alpha.
@@ -93,6 +100,7 @@ class RadioVariable:
     def print_alpha_for_question(self, raters_to_exclude=set()):
         reliability_data = self.to_reliability(raters_to_exclude=raters_to_exclude)
         value_domain = sorted(self.values_map.values())
+        pairable_values = calc_pairable_values(reliability_data, value_domain)
         k_alpha = alpha(
             reliability_data=reliability_data,
             value_domain=value_domain,
@@ -102,8 +110,8 @@ class RadioVariable:
         total_units = reliability_data.shape[1]
         print("----{}".format(self.label))
         print("{}".format(self.question_text))
-        print("Units: {} Max raters: {}"
-              .format(total_units, maximum_raters)
+        print("Units: {} Max raters: {} Pairable values: {}"
+              .format(total_units, maximum_raters, pairable_values)
         )
         print("Krippendorff alpha for '{}' is {:.3f} Alpha distance: {} Value domain: {}"
               .format(self.label, k_alpha, self.alpha_distance, value_domain)
