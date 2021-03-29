@@ -20,10 +20,11 @@ conflicts with other software you may be using.
 `pip install -r requirements.txt`
 
 Export and download the output data file for a project, which will have a
-filename like `MyProject-2021-03-29T1811-HighlighterByCase.csv.gz`
+filename like `MyProject-2021-03-29T1811-Highlighter.csv.gz`
+(the `-HighlighterByCase.csv.gz` file won't work for this.)
 
-Then
-`python3 reliability/hl_to_reliability.py --input MyProject-2021-03-29T1811-HighlighterByCase.csv.gz`
+Then:
+`python3 reliability/hl_to_reliability.py --input MyProject-2021-03-29T1811-Highlighter.csv.gz`
 
 Note that the file does not need to be gunzipped to process - the utility will detect the
 extension .gz and decompress if needed.
